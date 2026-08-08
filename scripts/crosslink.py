@@ -344,29 +344,117 @@ def tokenize_with_offsets(text: str):
     return [(m.group(0), m.start(), m.end()) for m in re.finditer(r"\w+", text)]
 
 
-def fuzzy_suggestions(source_stem: str, text: str, glossary, threshold: float, max_suggestions: int):
+def build_term_index(glossary):
+    """Precompute, once for the whole glossary (not per-article, not per-window),
+    everything fuzzy_suggestions needs to avoid the O(terms x window_sizes x tokens)
+    blowup of comparing every window against every term:
+      - term_recs: parallel list of (entry, normalized_term, term_word_set)
+      - inverted: normalized word -> list of term_recs indices containing that word,
+        so a window only ever gets compared against terms it shares a word with,
+        instead of the full glossary
+      - window_sizes: the union of window sizes any term could need (k-1, k, k+1
+        for each term's own word count k, capped at MAX_WINDOW_SIZE), so the
+        article's tokens are scanned once per distinct size rather than once
+        per term. The cap keeps a handful of unusually long headings (e.g. a
+        16-word heading) from blowing up window generation across the whole
+        article; a long heading can still be matched via a partial (capped-
+        length) window, since containment scores on the *window's* words being
+        present in the term, not on the window spanning the term's full length."""
+    MAX_WINDOW_SIZE = 8
+    # A word used as an inverted-index key is only useful for narrowing candidates
+    # if it's reasonably distinctive. Short fragments (stray single letters/digits
+    # left over from splitting things like "$\Sigma(A,B)$" or "6.1") and words that
+    # recur across many terms (this book's headings lean on a handful of recurring
+    # words like "set", "rule", "equality") both produce oversized candidate lists
+    # that cost far more in downstream scoring than they save — so they're excluded
+    # from indexing (though still part of each term's word set for scoring).
+    MIN_KEY_LEN = 3
+    MAX_TERMS_PER_WORD = 10
+
+    term_recs = []
+    raw_inverted = {}
+    window_sizes = set()
+    for g in glossary:
+        term_norm = normalize(g.term)
+        term_set = set(term_norm.split()) if term_norm else set()
+        idx = len(term_recs)
+        term_recs.append((g, term_norm, term_set))
+        for w in term_set:
+            if len(w) >= MIN_KEY_LEN:
+                raw_inverted.setdefault(w, []).append(idx)
+        k = len(g.term.split())
+        for size in (max(1, k - 1), k, k + 1):
+            window_sizes.add(min(size, MAX_WINDOW_SIZE))
+
+    inverted = {w: idxs for w, idxs in raw_inverted.items() if len(idxs) <= MAX_TERMS_PER_WORD}
+    return term_recs, inverted, sorted(window_sizes)
+
+
+def fuzzy_suggestions(source_stem: str, text: str, term_recs, inverted, window_sizes,
+                       threshold: float, max_suggestions: int):
     """Advisory-only pass: find word-windows in `text` whose normalized form is
     similar-but-not-identical to a glossary term belonging to a different
     article. Returns a list of (score, matched_phrase, GlossaryEntry), sorted
     by descending score, with overlapping candidate windows deduplicated by
-    keeping the highest-scoring one. Never modifies `text`."""
+    keeping the highest-scoring one. Never modifies `text`.
+
+    Performance note: a window is only scored against terms it shares at least
+    one normalized word with (via `inverted`) — genuinely unrelated pairs never
+    reach the expensive difflib.SequenceMatcher call. This means a window whose
+    only similarity to a term would come from character-level overlap on
+    completely disjoint words (e.g. a near-typo of an otherwise unrelated term)
+    is no longer caught; that trade-off is acceptable here since this pass is
+    explicitly a heuristic, advisory-only recall net for reworded phrases, not
+    a typo checker."""
     protected = protected_spans(text)  # includes pass-1's newly inserted links
     tokens = tokenize_with_offsets(text)
-    terms = [g for g in glossary if g.target != source_stem]
+    n = len(tokens)
 
     raw = []
-    for g in terms:
-        k = len(g.term.split())
-        for window_size in sorted({max(1, k - 1), k, k + 1}):
-            for i in range(len(tokens) - window_size + 1):
-                start, end = tokens[i][1], tokens[i + window_size - 1][2]
-                if overlaps(start, end, protected):
+    for window_size in window_sizes:
+        if window_size > n:
+            continue
+        for i in range(n - window_size + 1):
+            start, end = tokens[i][1], tokens[i + window_size - 1][2]
+            if overlaps(start, end, protected):
+                continue
+            phrase = text[start:end]
+            phrase_norm = normalize(phrase)
+            if not phrase_norm:
+                continue
+            phrase_set = set(phrase_norm.split())
+
+            candidate_idxs = set()
+            for w in phrase_set:
+                candidate_idxs.update(inverted.get(w, ()))
+            if not candidate_idxs:
+                continue
+
+            phrase_lower = phrase.strip().lower()
+            for idx in candidate_idxs:
+                g, term_norm, term_set = term_recs[idx]
+                if g.target == source_stem:
                     continue
-                phrase = text[start:end]
                 # Skip near-identical text — that's pass 1's job, not a "suggestion".
-                if phrase.strip().lower() == g.term.strip().lower():
+                if phrase_lower == g.term.strip().lower():
                     continue
-                score = similarity(phrase, g.term)
+                # jaccard/containment are cheap set ops; difflib.SequenceMatcher.ratio()
+                # is by far the most expensive part of this pass (it dominated profiling
+                # even after inverted-index pruning), so only fall back to it when the
+                # cheap metrics haven't already cleared the threshold. Same max(...) as
+                # before — this only skips computing a value that wouldn't have changed
+                # the outcome.
+                shared = len(phrase_set & term_set)
+                union_len = len(phrase_set | term_set)
+                jaccard = shared / union_len if union_len else 0.0
+                containment = (
+                    shared / len(phrase_set)
+                    if phrase_set and len(phrase_norm) >= 6 else 0.0
+                )
+                score = max(jaccard, containment)
+                if score < threshold:
+                    ratio = difflib.SequenceMatcher(None, phrase_norm, term_norm).ratio()
+                    score = max(score, ratio)
                 if score >= threshold:
                     raw.append((score, phrase, start, end, g))
 
@@ -561,6 +649,9 @@ def main():
         glossary = build_glossary(articles, ignore)
         glossary.extend(load_manual_glossary(folder))
 
+        if not args.no_fuzzy:
+            term_recs, inverted, window_sizes = build_term_index(glossary)
+
         for stem, path, text in articles:
             new_text, added = link_article(stem, text, glossary)
             if added:
@@ -575,7 +666,8 @@ def main():
                         f.write(new_text)
 
             if not args.no_fuzzy:
-                suggestions = fuzzy_suggestions(stem, new_text, glossary, args.fuzzy_threshold, args.max_fuzzy)
+                suggestions = fuzzy_suggestions(stem, new_text, term_recs, inverted, window_sizes,
+                                                 args.fuzzy_threshold, args.max_fuzzy)
                 if suggestions:
                     total_suggestions += len(suggestions)
                     print(f"\n{os.path.basename(path)}: {len(suggestions)} possible related mention(s) — NOT auto-linked, review and add confirmed ones to .crosslink-glossary.md:")
