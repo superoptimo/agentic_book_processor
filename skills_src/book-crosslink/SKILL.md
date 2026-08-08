@@ -1,6 +1,6 @@
 ---
 name: book-crosslink
-description: Post-processing pass that wires up an already-generated collection of book-topic-article notes, with three responsibilities: (1) cross-referencing between article bodies via Obsidian [[wikilinks]] wherever one article's prose mentions another's topic or a subsection concept, including similarity-based near-miss matches, not just exact ones; (2) linking each entry in vaults/[book]/book-guidelines.md's Topic List to its corresponding generated article, once that article exists; (3) fully assembling/maintaining the vault's "index.md" Map-of-Content note from that same linked Topic List. This is the sole owner of book-guidelines.md's link updates and of the Index note — book-topic-article and book-topic-batch only ever generate the topic articles themselves, never touch book-guidelines.md, and never produce an index. Runs a bundled deterministic script (scripts/crosslink.py) rather than hand-editing prose, so it's safe to re-run repeatedly as new articles get added. Manual invocation only — invoke explicitly with /book-crosslink, never automatically.
+description: Post-processing pass that wires up an already-generated collection of book-topic-article notes, with three responsibilities: (1) cross-referencing between article bodies via Obsidian [[wikilinks]] wherever one article's prose mentions another's topic or a subsection concept, including similarity-based near-miss matches, not just exact ones; (2) linking each entry in vaults/[book]/book-guidelines.md's Topic List to its corresponding generated article, once that article exists; (3) fully assembling/maintaining the vault's "index.md" Map-of-Content note from that same linked Topic List. This is the sole owner of book-guidelines.md's link updates and of the Index note — book-topic-article and book-topic-batch only ever generate the topic articles themselves, never touch book-guidelines.md, and never produce an index. Runs a deterministic script (scripts/crosslink.py, at the project's working-directory root — not inside this skill's folder) rather than hand-editing prose, so it's safe to re-run repeatedly as new articles get added. Manual invocation only — invoke explicitly with /book-crosslink, never automatically.
 disable-model-invocation: true
 argument-hint: "[book-folder-name] [--dry-run] [--verbose] [--fuzzy-threshold 0.62] [--no-fuzzy] [--no-guidelines-links] [--no-index]"
 ---
@@ -17,7 +17,9 @@ Wires up an existing, partially-or-fully-generated `book-topic-article` vault, e
 
 **This skill is the sole owner of book-guidelines.md's link state and of the Index note.** Neither `book-topic-article` nor `book-topic-batch` touches `book-guidelines.md` or produces an index — they only generate the topic articles themselves. This keeps a clean separation: the batch/single-article skills are pure *generators*, and this skill is the pure *wiring* stage that runs after them (and can run again after every subsequent batch, since it's idempotent).
 
-**Why this is a script, not freehand editing:** reliably finding "the first plain-text occurrence of this exact term, but not inside a code block/math block/existing link/frontmatter, and not a duplicate of a link already present" across a whole folder — plus parsing and precisely rewriting a structured two-level list inside `book-guidelines.md` without disturbing its other sections — is exactly the kind of repetitive, rule-governed text transformation that should be deterministic rather than left to per-file judgement calls. The bundled `scripts/crosslink.py` handles all of that consistently.
+**Why this is a script, not freehand editing:** reliably finding "the first plain-text occurrence of this exact term, but not inside a code block/math block/existing link/frontmatter, and not a duplicate of a link already present" across a whole folder — plus parsing and precisely rewriting a structured two-level list inside `book-guidelines.md` without disturbing its other sections — is exactly the kind of repetitive, rule-governed text transformation that should be deterministic rather than left to per-file judgement calls. The `crosslink.py` script handles all of that consistently.
+
+**Where the script lives:** `scripts/crosslink.py`, resolved relative to the **project's working directory root** (the same directory that contains `sources/` and `vaults/`) — not inside `.claude/skills/book-crosslink/`. Skill directories only ever hold `SKILL.md`; do not go looking for a `scripts/` subfolder next to this file. If a `scripts/crosslink.py` isn't found directly under the current working directory, search the working tree for `crosslink.py` before assuming it's missing.
 
 ```
 vaults/[book]/*.md                    <- input AND output: existing generated articles, edited in place
@@ -79,7 +81,7 @@ Because pass 2 never writes anything, a confirmed suggestion needs one more step
 
 ### Step 2 — Run the script
 
-Run the bundled script against the vault folder:
+Run the script — at `scripts/crosslink.py` under the working directory root, per the note above — against the vault folder:
 
 ```bash
 python3 scripts/crosslink.py "vaults/[book]" --verbose
