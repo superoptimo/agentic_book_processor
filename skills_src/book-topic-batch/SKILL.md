@@ -2,7 +2,7 @@
 name: book-topic-batch
 description: Orchestrates book-topic-article across a book's Topic List, turning vaults/[book]/book-guidelines.md into a full collection of Obsidian articles in one pass. Defaults to the top-level topics only; pass --deep to also generate an article per subtopic bullet. Requires vaults/[book]/book-guidelines.md to already exist; if it doesn't, tell the user to run /book-guidelines first rather than fabricating a topic list. This skill only generates article files — it never modifies book-guidelines.md and never produces an index; after it runs (or after any run that adds new articles), suggest /book-crosslink to link book-guidelines.md's Topic List entries to the new articles and (re)build the vault's index. Manual invocation only — invoke explicitly with /book-topic-batch, never automatically.
 disable-model-invocation: true
-argument-hint: "[book-folder-name] [--deep] [--topics \"a, b, c\"] [--overwrite]"
+argument-hint: "[book-folder-name] [--deep] [--topics N | A-B | N,A-B,... ] [--overwrite]"
 ---
 
 # Book Topic Batch Generator
@@ -41,7 +41,14 @@ Same resolution as `book-topic-article`: match `[book]` against `sources/` folde
    - **No `--deep` flag (default): queue top-level entries only.** Each numbered, bolded item becomes one article — a broad-category overview, potentially spanning several chapters. This is the common case and keeps the batch size modest (typically 6–12 articles for most books).
    - **`--deep` flag present: queue every item at both levels.** Every top-level entry *and* every subtopic bullet beneath it each becomes its own article — the top-level one a broad overview, each subtopic one a focused deep-dive. Phrase subtopics with their parent for disambiguation when resolving against the guidelines and when there's a name collision (e.g. "Beta Reduction (within Theory of Expressions)") — `book-topic-article` resolves this the same way it resolves any other topic name.
    - Recognize deep-mode intent from natural phrasing too, not just the literal flag — "include subtopics," "go deeper," "every topic and subtopic" should all trigger the same behavior as `--deep`.
-3. Independently of the mode, an **explicit subset** always narrows the queue: if the user names specific topics (`--topics "..."`, or just lists them in the request), queue exactly that subset instead of walking the full list — this works the same whether or not `--deep` is also given (a named subtopic still requires `--deep`-style resolution against the guidelines even if the overall run isn't in deep mode).
+3. Independently of the mode, `--topics` always narrows the queue by **position in the top-level Topic List's own numbering**, never by naming topics — the user specifies numbers, not topic names. Its value is a **comma-separated list of items**, where each item is either a bare number or an `A-B` range:
+   - **A single bare number** (e.g. `--topics 12`, no commas) — special-cased as a *count*: queue the first `N` top-level entries, i.e. numbers `1` through `N`. This is the only case where a lone number means "how many" rather than "which one."
+   - **A single range** (e.g. `--topics 6-18`) — queue top-level entries numbered `A` through `B` inclusive.
+   - **A comma-separated list of numbers and/or ranges** (e.g. `--topics 4,6-11,14,16,17-22`) — queue exactly the union of those numbers, in the order given. Once a comma is present, every bare number in the list means "that one topic," not a count — so `4,6-11,14` queues topics 4, 6, 7, 8, 9, 10, 11, and 14, not "the first 4 plus a range plus the first 14."
+   - Deduplicate if ranges/numbers overlap (e.g. `4-6,5-8` → 4,5,6,7,8 each once), then re-sort into the Topic List's own top-to-bottom order (item order in the queue follows Topic List position, not the order numbers were typed) — this keeps the eventual index note coherent per point 4 below.
+   - The numbers always refer to the Topic List's own numbering (`**1. Introduction**`, `**2. Natural Deduction**`, …), never a re-count of an already-narrowed queue. If any number exceeds the count of top-level entries that exist, drop it (or clamp a range's upper bound) and tell the user which ones were out of range (e.g. "book only has 14 top-level topics; dropping 17 and 22, generating 4,6-11,14").
+   - In `--deep` mode, `--topics` still selects by top-level position; each selected top-level entry pulls in all of its own subtopic bullets too (deep mode's per-entry expansion still applies within the selected set).
+   - This works the same whether or not `--deep` is also given.
 4. Preserve the Topic List's own ordering in the queue (top-to-bottom, and in deep mode, each top-level entry immediately followed by its own subtopics) — it's a reasonable reading order and makes the eventual index note coherent.
 5. **Filename collisions (deep mode only):** because both levels get queued together, it's possible (if uncommon) for a subtopic phrase to collide with another item's slug. If two different queued items would produce the same `[Topic-Slug].md`, disambiguate the later one by appending its parent category, e.g. `Beta-Reduction-(Theory-of-Expressions).md`.
 
@@ -74,6 +81,22 @@ Since this skill never touches `book-guidelines.md` or an index, close by tellin
 - Plan reported: "8 topics total, 7 to generate, 1 already present — proceeding" (well under the ~20 threshold, so no confirmation needed).
 - Generates the remaining 7 via `book-topic-article`, tracking progress as it goes.
 - Final summary: "7 generated, 1 skipped (already existed), 0 failed. Run `/book-crosslink Martin-Löf_Type_Theory` next to link these into `book-guidelines.md`'s Topic List and update the vault index."
+
+**Ranged subset** — Input: `/book-topic-batch Martin-Löf_Type_Theory --topics 6-18`
+- Resolves book, confirms `book-guidelines.md` exists.
+- `--topics 6-18` → queue is top-level entries numbered 6 through 18 inclusive (13 topics). Book has only 14 top-level entries, so the range is fully in bounds.
+- Of these, none already exist → plan reported: "13 topics total (numbers 6–18), 13 to generate, 0 already present — proceeding."
+- Generates all 13 via `book-topic-article`, tracking progress as it goes.
+- Final summary: "13 generated, 0 skipped, 0 failed. Run `/book-crosslink Martin-Löf_Type_Theory` next to link these into `book-guidelines.md`'s Topic List and update the vault index."
+
+**Mixed list of numbers and ranges** — Input: `/book-topic-batch Martin-Löf_Type_Theory --topics 4,6-11,14,16,17-22`
+- Resolves book, confirms `book-guidelines.md` exists.
+- `--topics 4,6-11,14,16,17-22` (comma present, so no number here is treated as a count) → union is {4, 6, 7, 8, 9, 10, 11, 14, 16, 17, 18, 19, 20, 21, 22}. Book has only 20 top-level entries, so 21 and 22 are dropped.
+- Queue re-sorted into Topic List order: 4, 6, 7, 8, 9, 10, 11, 14, 16, 17, 18, 19, 20 (13 topics).
+- Of these, topic 9's article already exists → skipped by default.
+- Plan reported: "13 topics requested (numbers 4,6-11,14,16,17-22; 21 and 22 dropped — book only has 20), 12 to generate, 1 already present — proceeding."
+- Generates the remaining 12 via `book-topic-article`, tracking progress as it goes.
+- Final summary: "12 generated, 1 skipped (already existed), 0 failed. Run `/book-crosslink Martin-Löf_Type_Theory` next to link these into `book-guidelines.md`'s Topic List and update the vault index."
 
 **Deep mode** — Input: `/book-topic-batch Martin-Löf_Type_Theory --deep`
 - Same book, same prerequisite check.
