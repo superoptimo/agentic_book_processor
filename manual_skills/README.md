@@ -15,7 +15,7 @@ a project is configured with 4 scripts and the book file for geenerating individ
 
 ### Stage 1: Generate Book Guideliness.
 
-- In a new chat session, attach the book pdf and paste the instructions from [book-guideliness-prompt.md](book-guideliness-prompt). 
+- In a new chat session, attach the book pdf and paste the instructions from [book-guideliness-prompt.md](book-guideliness-prompt.md). 
 - Then copy the generated markdown text and save it as a file called `book-guidelines.md`. 
 
 ### Stage 2: Configure the project
@@ -24,9 +24,9 @@ a project is configured with 4 scripts and the book file for geenerating individ
 > Generate articles using book-topic-article.SKILL and book.pdf
 2. Rename the book exactly as `book.pdf` and upload it to the project file resources.
 3. Upload these script files for enabling the skill `book-topic-article` in the custom operation on the project:
-    * [book-topic-article.SKILL.md](book-topic-article.SKILL).
-    * [article-style.md](article-style).
-    * [learning-goals.md](learning-goals).
+    * [book-topic-article.SKILL.md](book-topic-article.SKILL.md).
+    * [article-style.md](article-style.md).
+    * [learning-goals.md](learning-goals.md).
     * The generated guideliness that you've saved in the previous stage, as `book-guidelines.md`.
 
 ### Generating articles
@@ -39,7 +39,7 @@ in a new chat session (F.E. *My Special Topic*, as the topic should be passed in
 
 ## Plus Tool: The Socratic Tutor
 
-In this folder is included a socratic tutor skill ([socratic_tutor.SKILL](socratic_tutor.SKILL)) which can be used for configuring a NotebookLM or ChatGPT project for studying subjects from a group of books and learning resources. Just install it on the instructions at project settings.
+In this folder is included a socratic tutor skill ([socratic_tutor.SKILL](socratic_tutor.SKILL.md)) which can be used for configuring a NotebookLM or ChatGPT project for studying subjects from a group of books and learning resources. Just install it on the instructions at project settings.
 
 This socratic tutor has 3 modes of operation:
 
