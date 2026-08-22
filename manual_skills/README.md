@@ -15,7 +15,7 @@ a project is configured with 4 scripts and the book file for geenerating individ
 
 ### Stage 1: Generate Book Guideliness.
 
-- In a new chat session, attach the book pdf and paste the instructions from [book_guidelines_prompt.md](book_guidelines_prompt.md). 
+- In a new chat session, attach the book pdf and paste the instructions from [book_guideliness_prompt.md](book_guideliness_prompt.md). 
 - Then copy the generated markdown text and save it as a file called `book-guidelines.md`. 
 
 ### Stage 2: Configure the project
