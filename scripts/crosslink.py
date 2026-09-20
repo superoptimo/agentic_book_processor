@@ -46,27 +46,38 @@ PASS 2 — similarity search (advisory only, NEVER auto-applied):
   keeps every link that actually lands in a file coming from the same
   reviewed, deterministic mechanism.
 
-PASS 3 — guidelines Topic List linking + Index assembly (auto-applied, but narrowly scoped):
-  Unlike passes 1/2, book-guidelines.md and the "index.md" note are not
-  scanned as prose. Instead:
-    - Only the "## Topic List" section of book-guidelines.md is touched. Every
-      top-level entry and every subtopic bullet is checked against the set
-      of generated articles in the folder; if a matching article exists, the
-      entry's text is wrapped in a wikilink to it (exact slug match first,
-      then a same-parent-suffix match for collision-disambiguated filenames,
-      then a similarity-based fallback reusing pass 2's scoring). Entries
-      with no matching article yet are left as plain text — so the Topic
-      List doubles as a live "what's been written" indicator. Idempotent:
-      already-linked entries are skipped.
-    - "index.md" is then fully regenerated from that same
-      (now-linked) Topic List content, with a back-link to book-guidelines.md.
-      Being fully derived, it's simply rewritten each run rather than
-      diffed/merged — cheap, and always exactly in sync.
+PASS 3 — Index assembly, derived read-only from the Topic List (auto-applied,
+narrowly scoped):
+  book-guidelines.md is NEVER written by this script — it is read-only input.
+  Its "## Topic List" section is parsed in memory only: every top-level entry
+  and every subtopic bullet is checked against the set of generated articles
+  in the folder, and if a matching article exists, a *copy* of that entry's
+  text (for the Index only) is wrapped in a wikilink to it (exact slug match
+  first, then a same-parent-suffix match for collision-disambiguated
+  filenames, then a similarity-based fallback reusing pass 2's scoring).
+  book-guidelines.md itself is left exactly as it comes, with no links ever
+  written into it. "index.md" is then fully regenerated from that in-memory
+  linked copy, with a back-link to book-guidelines.md. Being fully derived,
+  it's simply rewritten each run rather than diffed/merged — cheap, and
+  always exactly in sync with book-guidelines.md's current Topic List.
+
+  Any generated article whose stem never matched a Topic List entry (at any
+  tier — exact, collision, or fuzzy) is not simply dropped: it's listed under
+  a trailing "## Extra Topics" section in index.md, wikilinked, so every
+  article in the folder is reachable from the Index even when it doesn't
+  correspond to anything in book-guidelines.md's Topic List (e.g. a
+  book-topic-article run on a topic phrased well outside the guidelines'
+  wording, or a topic synthesized across chapters that was never its own
+  Topic List bullet). This section is entirely derived from "which stems did
+  pass 3's matching loop not claim this run" — nothing is persisted about it
+  between runs, so an article that later gains a genuine Topic List match
+  (e.g. after the guidelines are regenerated) simply drops out of Extra
+  Topics and appears under its matched entry instead, with no manual cleanup.
 
 Excluded from scanning/linking as *source* files for passes 1 and 2 (a
 heading inside them is not built into the glossary either, since they're
-meta/index files rather than generated topic articles — pass 3 is the only
-pass that touches them, and only in the narrow way described above):
+meta/index files rather than generated topic articles — pass 3 only ever
+reads book-guidelines.md, and only writes index.md):
   - book-guidelines.md
   - index.md
   - dotfiles (.crosslink-glossary.md, .crosslink-ignore.md, .article-style.md, etc.)
@@ -516,52 +527,53 @@ def find_matching_article(topic_text: str, stems: list, stem_headings: dict = No
 WIKI_ENTRY_RE = re.compile(r"^\[\[([^|\]]+)\|([^\]]+)\]\]$")
 
 
-def update_guidelines_links(vault_folder: str, stems: list, dry_run: bool, stem_headings: dict = None):
-    """Wrap each Topic List entry (both levels) in book-guidelines.md with a
-    wikilink to its matching generated article, if one exists. Only the
-    Topic List section is touched — Header and Chapter Summaries are left
-    completely alone.
-
-    Every entry is re-evaluated on every run, linked or not — this is still
-    effectively idempotent for the steady-state case (a stable exact/collision
-    match re-resolves to itself and the line doesn't change), but it also lets
-    an entry that was only fuzzy-matched to a *different* article (e.g. a
-    subtopic that fell back to linking its parent category because its own
-    dedicated article didn't exist yet) get upgraded to a precise exact/
-    collision match once that dedicated article shows up in a later run.
-    A fuzzy match is only ever replaced by an exact/collision-tier match, never
-    by a different fuzzy match — that would risk unstable flip-flopping
-    between two similarly-scored candidates on successive runs. Returns
-    (path_or_None, entries_changed, topic_list_text_after)."""
+def compute_linked_topic_list(vault_folder: str, stems: list, stem_headings: dict = None):
+    """Read book-guidelines.md's Topic List section — read-only, this file is
+    NEVER written by this script — and return an in-memory wikilinked copy of
+    it for index.md to render. Every top-level entry and every subtopic
+    bullet is matched against the set of generated articles (exact slug match
+    first, then a same-parent-suffix match for collision-disambiguated
+    filenames, then a similarity-based fallback reusing pass 2's scoring); a
+    match wraps a *copy* of the entry's text in a wikilink for the Index only.
+    book-guidelines.md keeps whatever plain-text form it already has. Returns
+    (path_or_None, entries_linked, linked_topic_list_text, matched_stems), where
+    matched_stems is the set of article stems claimed by at least one Topic
+    List entry this run — used by the caller to compute the Extra Topics
+    section (stems in `stems` but not in matched_stems)."""
     path = os.path.join(vault_folder, "book-guidelines.md")
     if not os.path.exists(path):
-        return None, 0, ""
+        return None, 0, "", set()
 
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
 
     section_match = TOPIC_LIST_SECTION_RE.search(text)
     if not section_match:
-        return path, 0, ""
+        return path, 0, "", set()
 
-    section_start, section_end = section_match.span(1)
-    section_text = text[section_start:section_end]
+    section_text = section_match.group(1)
+    entries_linked = 0
+    matched_stems = set()
 
-    entries_changed = 0
+    def claim_stem_from_wikitarget(wikitarget: str):
+        # A wikitarget may carry a "#Heading" anchor; only the stem before it
+        # identifies the article for Extra Topics purposes.
+        stem = wikitarget.split("#", 1)[0]
+        if stem in stems:
+            matched_stems.add(stem)
 
     def resolve_entry(prefix: str, entry_text: str, suffix: str) -> str:
-        nonlocal entries_changed
+        nonlocal entries_linked
         wiki = WIKI_ENTRY_RE.match(entry_text.strip())
         if wiki:
-            existing_target, display_text = wiki.group(1), wiki.group(2)
-            new_target, tier = find_matching_article(display_text, stems, stem_headings)
-            if new_target and tier in ("exact", "collision") and new_target != existing_target:
-                entries_changed += 1
-                return f"{prefix}[[{new_target}|{display_text}]]{suffix}"
-            return prefix + entry_text + suffix  # leave as-is: stable, or only a fuzzy alternative exists
+            # Already a wikilink in book-guidelines.md itself — keep as-is for the Index too.
+            entries_linked += 1
+            claim_stem_from_wikitarget(wiki.group(1))
+            return prefix + entry_text + suffix
         new_target, _tier = find_matching_article(entry_text, stems, stem_headings)
         if new_target:
-            entries_changed += 1
+            entries_linked += 1
+            claim_stem_from_wikitarget(new_target)
             return f"{prefix}[[{new_target}|{entry_text}]]{suffix}"
         return prefix + entry_text + suffix
 
@@ -574,14 +586,8 @@ def update_guidelines_links(vault_folder: str, stems: list, dry_run: bool, stem_
             return resolve_entry(m2.group(1), m2.group(2), m2.group(3))
         return line
 
-    new_section_text = "\n".join(process_line(l) for l in section_text.split("\n"))
-
-    if new_section_text != section_text and not dry_run:
-        new_text = text[:section_start] + new_section_text + text[section_end:]
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(new_text)
-
-    return path, entries_changed, new_section_text
+    linked_text = "\n".join(process_line(l) for l in section_text.split("\n"))
+    return path, entries_linked, linked_text, matched_stems
 
 
 def extract_book_title(guidelines_text: str, fallback_folder_name: str) -> str:
@@ -591,17 +597,26 @@ def extract_book_title(guidelines_text: str, fallback_folder_name: str) -> str:
     return fallback_folder_name.replace("-", " ").replace("_", " ")
 
 
-def build_index(vault_folder: str, folder_name: str, book_title: str, topic_list_text: str, dry_run: bool):
+def build_index(vault_folder: str, folder_name: str, book_title: str, topic_list_text: str,
+                 extra_stems: list, dry_run: bool):
     """Fully (re)generate 'index.md' from the (already-linked)
-    Topic List content. Being entirely derived from book-guidelines.md, this is
-    just rewritten each run rather than incrementally merged — cheap, and
-    guaranteed to stay in sync. Returns (path, changed: bool)."""
+    Topic List content, plus a trailing "## Extra Topics" section for any
+    generated article that no Topic List entry claimed this run (see
+    compute_linked_topic_list's matched_stems). Being entirely derived from
+    book-guidelines.md and the current article set, this is just rewritten
+    each run rather than incrementally merged — cheap, and guaranteed to stay
+    in sync. Returns (path, changed: bool)."""
     index_path = os.path.join(vault_folder, "index.md")
     content = (
         f"# {book_title} — Index\n\n"
         f"[[book-guidelines|↩ Back to guidelines]]\n\n"
         f"{topic_list_text.strip(chr(10))}\n"
     )
+    if extra_stems:
+        content += "\n---\n\n## Extra Topics\n\n"
+        content += "Generated articles not (yet) matched to a Topic List entry in book-guidelines.md:\n\n"
+        for stem in sorted(extra_stems, key=str.lower):
+            content += f"- [[{stem}|{slug_title(stem)}]]\n"
     old_content = None
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
@@ -623,10 +638,8 @@ def main():
                      help="minimum similarity score (0-1) for a pass-2 suggestion (default: 0.62)")
     ap.add_argument("--max-fuzzy", type=int, default=15,
                      help="max pass-2 suggestions to report per file (default: 15)")
-    ap.add_argument("--no-guidelines-links", action="store_true",
-                     help="skip pass 3's book-guidelines.md Topic List linking")
     ap.add_argument("--no-index", action="store_true",
-                     help="skip pass 3's index.md (re)generation")
+                     help="skip pass 3 entirely (index.md (re)generation from book-guidelines.md's Topic List)")
     args = ap.parse_args()
 
     folder = args.folder
@@ -677,28 +690,28 @@ def main():
     print(f"\n{'(dry run) ' if args.dry_run else ''}Pass 1/2: {total_links_added} link(s) added across {total_files_changed} file(s), "
           f"{total_suggestions} similarity suggestion(s) surfaced for review, out of {len(articles)} article(s) scanned.")
 
-    # Pass 3: guidelines Topic List linking + Index assembly
-    if not args.no_guidelines_links:
-        gl_path, gl_links_added, topic_list_text = update_guidelines_links(folder, stems, args.dry_run, stem_headings)
+    # Pass 3: Index assembly, derived read-only from book-guidelines.md's Topic
+    # List. book-guidelines.md itself is never written by this script.
+    if not args.no_index:
+        gl_path, entries_linked, topic_list_text, matched_stems = compute_linked_topic_list(folder, stems, stem_headings)
         if gl_path is None:
-            print("\nPass 3: no book-guidelines.md found in this folder — skipping Topic List linking and Index.")
+            print("\nPass 3: no book-guidelines.md found in this folder — skipping Index generation.")
         else:
-            print(f"\nPass 3: {gl_links_added} Topic List entr{'y' if gl_links_added == 1 else 'ies'} linked in book-guidelines.md.")
-            if not args.no_index:
-                with open(gl_path, "r", encoding="utf-8") as f:
-                    guidelines_text = f.read()
-                folder_name = os.path.basename(os.path.normpath(folder))
-                book_title = extract_book_title(guidelines_text, folder_name)
-                # Re-derive topic_list_text from the file on disk when not a dry run,
-                # so the Index reflects what was actually written.
-                if not args.dry_run:
-                    section_match = TOPIC_LIST_SECTION_RE.search(guidelines_text)
-                    topic_list_text = section_match.group(1) if section_match else topic_list_text
-                index_path, index_changed = build_index(folder, folder_name, book_title, topic_list_text, args.dry_run)
-                status = "updated" if index_changed else "already up to date"
-                print(f"Pass 3: Index note {status} at {index_path}.")
-    elif not args.no_index:
-        print("\nPass 3: --no-guidelines-links also skips Index generation (Index is derived from the linked Topic List).")
+            extra_stems = [s for s in stems if s not in matched_stems]
+            print(f"\nPass 3: {entries_linked} Topic List entr{'y' if entries_linked == 1 else 'ies'} linked for the Index "
+                  f"(book-guidelines.md itself left untouched).")
+            if extra_stems:
+                print(f"Pass 3: {len(extra_stems)} article(s) unmatched by any Topic List entry — "
+                      f"listed under Extra Topics: {', '.join(sorted(extra_stems, key=str.lower))}")
+            with open(gl_path, "r", encoding="utf-8") as f:
+                guidelines_text = f.read()
+            folder_name = os.path.basename(os.path.normpath(folder))
+            book_title = extract_book_title(guidelines_text, folder_name)
+            index_path, index_changed = build_index(folder, folder_name, book_title, topic_list_text, extra_stems, args.dry_run)
+            status = "updated" if index_changed else "already up to date"
+            print(f"Pass 3: Index note {status} at {index_path}.")
+    else:
+        print("\nPass 3: --no-index skips Index generation entirely.")
 
 
 if __name__ == "__main__":

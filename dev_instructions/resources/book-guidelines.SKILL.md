@@ -1,23 +1,21 @@
 ---
 name: book-guidelines
-description: Generates a structured "guidelines" markdown study-guide for a book, from a fixed sources/[book]/book.pdf input to a fixed vaults/[book]/book-guidelines.md output, and drafts a book-specific vaults/[book]/.learning-goals.md (Focus-Area-tagged) if one doesn't already exist. Manual invocation only — invoke explicitly with /book-guidelines, never automatically.
+description: Generates a structured "guidelines" markdown study-guide for a book, from a fixed sources/[book]/book.pdf input to a fixed vaults/[book]/book-guidelines.md output. Manual invocation only — invoke explicitly with /book-guidelines, never automatically.
 disable-model-invocation: true
 argument-hint: "[book-folder-name]"
 ---
 
 # Book Guidelines Generator
 
-Turns a source book file into a single, richly structured Markdown "book-guidelines" document: a header, a nested ontological topic index, and a chapter-by-chapter breakdown with key definitions and study questions. It also drafts a starter book-specific `.learning-goals.md`, tagged against the workbench's fixed Focus Areas, so `book-topic-article` has something to work with on this book without the user hand-writing it first.
+Turns a source book file into a single, richly structured Markdown "book-guidelines" document: a header, a nested ontological topic index, and a chapter-by-chapter breakdown with key definitions and study questions.
 
 **Invocation:** this skill only runs when explicitly called with `/book-guidelines`. It must never be triggered automatically by Claude inferring intent from conversation — always wait for the explicit command.
 
 This skill assumes (and enforces) a fixed project layout:
 
 ```
-sources/[book]/book.pdf            <- input: the book always lives here, always named book.pdf
-vaults/[book]/                     <- output: the generated guideline markdown goes here
-vaults/.learning-goals.md          <- optional input: workbench-wide Focus Areas + learning goals
-vaults/[book]/.learning-goals.md   <- output (only if absent): book-specific Focus-Area-tagged draft
+sources/[book]/book.pdf   <- input: the book always lives here, always named book.pdf
+vaults/[book]/            <- output: the generated guideline markdown goes here
 ```
 
 `[book]` is a folder name, one per book (e.g. `sources/thompson-type-theory/book.pdf`).
@@ -131,53 +129,9 @@ Notes on filling the template:
   - Wrong: `` `A ⇒ B` `` or a fenced block containing `∀x. P(x)`
   - Right: `$A \Rightarrow B$` inline, or a `$$...$$` block for a standalone rule/derivation
 
-### Step 5 — Draft a book-specific `.learning-goals.md` (only if one doesn't already exist)
+### Step 5 — Confirm
 
-This step is **additive and non-destructive**: it never touches an existing file, and it never invents a category system of its own. (For backfilling this file across books that were already processed by an older version of this skill — i.e. books that already have `book-guidelines.md` but never got this step run against them — use the stand-alone `/extract_learning_goals` skill instead of re-running `/book-guidelines`; it performs this same drafting logic without paying the cost of re-extracting the source PDF.)
-
-1. Check whether `vaults/[book]/.learning-goals.md` already exists.
-   - **If it exists:** skip this step entirely. Never overwrite or append to a user-authored learning-goals file — that file may already encode deliberate narrowing (per that file's own convention, e.g. "this book is mainly here for Part 3"). Note in Step 6 that it was left untouched.
-2. Read `vaults/.learning-goals.md` (the workbench-wide file), if present, specifically its **Focus Areas** section — the fixed category set (name, slug, and short description per area) that the whole pipeline shares.
-   - **If `vaults/.learning-goals.md` is missing, or has no Focus Areas section:** skip this step entirely and say so in Step 6 — there's no fixed category set to tag against, and inventing one here would fork the taxonomy `learning-roadmap` and `book-topic-article` both depend on. Do not fabricate Focus Areas.
-3. Using the Topic List you just built in Step 4 (never the raw PDF text again — the Topic List is already the right level of abstraction), tag each **top-level topic** against every Focus Area it genuinely belongs to. Match semantically against each area's description and conceptual-connections list from the workbench file, not by keyword string-matching alone. A topic may carry more than one Focus Area tag; a topic that fits none of the areas well is simply left untagged (see the note below).
-4. Write `vaults/[book]/.learning-goals.md` using this structure:
-
-```markdown
-# Learning Goals — <Book Title>
-
-> Drafted automatically by `/book-guidelines` from this book's Topic List,
-> tagged against the Focus Areas defined in `vaults/.learning-goals.md`.
-> This is a starting point, not a final answer — edit freely to narrow
-> emphasis, add a book-specific angle, or override a tag.
-
-## Focus Areas covered by this book
-
-### <Focus Area Name> (`<slug>`)
-- <Top-level topic from the Topic List, verbatim>
-- <Another matching top-level topic>
-
-### <Next Focus Area Name> (`<slug>`)
-- ...
-
-## Untagged topics
-
-<Only include this section if at least one top-level topic didn't fit any
-Focus Area well. List them plainly — this is a signal for the user, not a
-failure.>
-- <Topic>
-```
-
-- List **every** Focus Area from the workbench file that has at least one matching topic in this book — omit an area entirely if nothing in the book maps to it, rather than padding it with a weak match.
-- Under each area, list top-level topic names only (exactly as phrased in the Topic List just written), not subtopics — this file sets emphasis at the topic level; `book-topic-article` resolves the finer-grained connection when it writes the actual deep-dive.
-- Keep this file short — it's a routing/emphasis aid, not a second Topic List. Don't restate subtopics, definitions, or page ranges here; those already live in `book-guidelines.md`.
-
-### Step 6 — Confirm
-
-After writing the file(s), briefly tell the user:
-- where `book-guidelines.md` was saved, and flag anything notable from extraction (e.g. "chapter boundaries were inferred — the source PDF had no heading markup" or "pages 40-52 were image scans and may be under-represented");
-- what happened with `.learning-goals.md`: drafted fresh (name the Focus Areas it was tagged against), left untouched because one already existed, or skipped because `vaults/.learning-goals.md` had no Focus Areas to draw from.
-
-If the user mentions other already-processed books in `vaults/` that are missing `.learning-goals.md` (e.g. from before this step existed), mention `/extract_learning_goals` as the way to backfill those in bulk without re-running `/book-guidelines` on each.
+After writing the file, briefly tell the user where it was saved (`vaults/[book]/book-guidelines.md`) and flag anything notable from extraction (e.g. "chapter boundaries were inferred — the source PDF had no heading markup" or "pages 40-52 were image scans and may be under-represented").
 
 ## Example
 
@@ -197,5 +151,3 @@ The output follows the template above: a Header naming Simon Thompson and summar
    - Simply typed $\lambda$-calculus
    - Denotational vs. operational significance of a type
 ```
-
-Since `vaults/.learning-goals.md` exists and has a Focus Areas section, Step 5 also drafts `vaults/thompson-type-theory/.learning-goals.md`, tagging "The Curry–Howard Isomorphism" under `type-theory` (and, if the chapter also covers proof-term assignment as a proof-search procedure, under `automated-reasoning` too), and "Sense and Denotation" is left untagged if it's purely historical/philosophical framing with no clear mechanism payoff.

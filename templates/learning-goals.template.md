@@ -9,18 +9,56 @@
 ## Standing project
 
 I'm building an accelerated, self-directed learning system for advanced
-Type Theory, Abstract Interpretation, and Formal Proofs, aimed at two
-concrete engineering targets:
+Type Theory, Abstract Interpretation, and Formal Proofs.
 
-1. **A Rust compiler/verifier** that can check program correctness against
-   logic-clause specifications (Hoare triples, or dependent-subtyping style
-   contracts), with a custom automated theorem prover embedded in the
-   toolchain.
-2. **A meta-programming elaborator** that resolves implicit arguments via
-   metavariable unification — in the spirit of Miller's pattern unification —
-   using bidirectional typing, modeled on how Lean's elaborator and kernel
-   unifier actually work.
+Help me to acquire the theoretical and engineering knowledge required to
+design and implement a **Rust-based compiler for a dependent/refinement type language with automated formal verification capabilities**, 
+that can check program correctness against logic-clause specifications (Hoare triples, or dependent-subtyping style contracts), with a custom automated theorem prover embedded in the toolchain.
 
+The compiler's functionality goals are:
+- Constraint-based inference for refinement types.
+- Reasoning about First and Second-order logic grounded in dependent type theory.
+- Abstract interpretation for automated invariant generation (Hoare contracts, Horn clauses, requires/ensures conditions).
+- This compiler will implement **A meta-programming elaborator** that resolves implicit arguments via metavariable unification — in the spirit of   Miller's pattern unification — using bidirectional typing, modeled on how Lean's elaborator and kernel unifier actually work.
+- This compiler will include a Constraint Satisfaction Programming (CSP) kernel for searching counterfacts that could break the type invariants of the analized programs. This CSP will support the Abstract Interpretation process for proving absence of bugs by over-approximating program semantics, while CSP efficiently proves the presence of bugs by searching for concrete, satisfying assignments (counterexamples/counterfacts). This should be implement domain/lattice propagation and handling integrer and non-linear equations, but also abstract data structures as complex domains (represented like automata grammars DFA). 
+
+# Required Conceptual Connections
+
+Whenever relevant, explicitly connect the topic to:
+
+* judgments
+* contexts
+* dependent types
+* definitional equality
+* Π-types
+* Σ-types
+* inductive types
+* refinement types
+* metavariables
+* unification
+* constraint generation
+* constraint solving
+* bidirectional typing
+* elaboration
+* operational semantics
+* Hoare logic
+* weakest preconditions
+* symbolic execution
+* abstract interpretation
+* reachability analysis
+* invariant generation
+* SAT
+* SMT
+* CHCs
+* CEGAR
+* proof certificates
+* proof reconstruction
+* trusted kernels
+* Constraint Satisfaction Problems
+* Structural tractability
+* Monadic Second-Order Logic
+* Algebraic graph theory
+   
 ## How articles should use this
 
 - **Weight toward mechanism, not just theory.** When a topic has both a
@@ -45,6 +83,37 @@ concrete engineering targets:
   target — for those, just skip the "how this feeds the project" note rather
   than manufacturing a strained one.
 
+# Depth Requirements
+
+Assume the learner has:
+
+* strong programming experience
+* strong Rust knowledge
+* significant familiarity with compilers
+* growing knowledge of dependent type theory
+* familiarity with Lean-like theorem proving
+* interest in proof theory and logic programming
+
+Do NOT spend excessive space explaining elementary programming concepts.
+
+Instead, spend depth on:
+
+* formal definitions
+* inference rules
+* semantic distinctions
+* algorithmic mechanisms
+* invariants
+* representations
+* complexity
+* implementation tradeoffs
+* soundness
+* completeness
+* trusted computing base
+* proof-producing architecture
+
+When introducing mathematical machinery, explain it from first principles before using advanced terminology.
+
+  
 ## Specific threads to keep surfacing across books
 
 - Judgment forms and typing rules, as the shared ancestor of both "a type
@@ -59,13 +128,10 @@ concrete engineering targets:
 - Bidirectional typing (inference vs. checking modes) wherever a book's
   presentation of typing rules can be read that way, even if the book itself
   doesn't use that framing.
-
-## Non-goals (to keep articles from over-reaching)
-
-- Not currently building a homotopy type theory library — HoTT-adjacent
-  material can be treated as background/context, not a primary target.
-- Not trying to reproduce Lean's full elaborator — the goal is understanding
-  the core unification/elaboration mechanism well enough to build a much
-  smaller, purpose-built one, so articles should favor the minimal-mechanism
-  explanation over exhaustive coverage of Lean's actual implementation
-  complexity.
+- Proof search. Clause simplification and unification of terms.
+- Abstract Interpretation, Symbolic Execution and Constraint Programming applied
+  on satisfability of verification conditions for evaluating program guards, reachability analysis and path coverage.
+- Satisfability Modulo Theories, Reachability, Linear and Non-Linear constraint programming.
+- Galois Connection, abstract lattices and domain propagation methods.
+- Abductive Reasoning, Craig Interpolation and Clause Generation for refinement of types and verification conditions.
+  

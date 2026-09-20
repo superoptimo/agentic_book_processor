@@ -67,7 +67,7 @@ def build_workspace(project_name, agentic_platform):
     agent_platform_folder = PLATFORM_FOLDERS[agentic_platform]
     project_root = BUILD_ROOT / project_name
 
-    for sub in ("sources", "scripts", "vaults"):
+    for sub in ("sources", "scripts", "vaults", "workspace"):
         (project_root / sub).mkdir(parents=True, exist_ok=True)
 
     platform_dir = project_root / agent_platform_folder
@@ -105,6 +105,7 @@ script/                  <- deterministic helper scripts (e.g. crosslink.py)
 vaults/                  <- generated Obsidian output lands here, one folder per book
 vaults/.article-style.md    <- workbench-wide article style defaults (edit freely)
 vaults/.learning-goals.md   <- workbench-wide learning goals (edit freely)
+workspace/   <- empty folder for further article modyfication by the user
 {agent_platform_folder}/skills/         <- the AI skill pipeline for {agentic_platform}
 ```
 
@@ -129,10 +130,16 @@ explicitly in this order:
    default; pass `--deep` to also generate one article per subtopic). Skips articles that
    already exist unless `--overwrite` is given.
 4. **`/book-crosslink [book] [--dry-run] [--verbose]`** — post-processing pass that wires
-   the generated articles together: cross-links shared concepts between articles, links
-   `book-guidelines.md`'s Topic List to the articles that now exist, and (re)builds
-   `vaults/[book]/index.md`. Runs the bundled `script/crosslink.py`; safe and idempotent to
-   re-run after every batch that adds new articles.
+   the generated articles together: cross-links shared concepts between articles, and
+   (re)builds `vaults/[book]/index.md` from `book-guidelines.md`'s Topic List (read-only —
+   `book-guidelines.md` itself is never modified). Runs the bundled `script/crosslink.py`;
+   safe and idempotent to re-run after every batch that adds new articles.
+5. **`/learning-roadmap [--focus "..."]`** — reads `vaults/.learning-goals.md` plus every
+   processed book's `book-guidelines.md` and writes `vaults/learning-roadmap.md`: one
+   sequenced, prerequisite-aware curriculum spanning the whole vault, with each topic
+   annotated with why it matters for your stated goals, which books/notes to study, key
+   concepts, and key questions. Fully regenerated each run; run it any time after adding or
+   processing more books to keep it in sync.
 
 Optional per-book overrides: drop `vaults/[book]/.article-style.md` and/or
 `vaults/[book]/.learning-goals.md` alongside the workbench-wide ones in `vaults/` — book-level

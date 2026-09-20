@@ -1,8 +1,8 @@
 ---
 name: book-crosslink
-description: Post-processing pass that wires up an already-generated collection of book-topic-article notes, with three responsibilities: (1) cross-referencing between article bodies via Obsidian [[wikilinks]] wherever one article's prose mentions another's topic or a subsection concept, including similarity-based near-miss matches, not just exact ones; (2) linking each entry in vaults/[book]/book-guidelines.md's Topic List to its corresponding generated article, once that article exists; (3) fully assembling/maintaining the vault's "index.md" Map-of-Content note from that same linked Topic List. This is the sole owner of book-guidelines.md's link updates and of the Index note — book-topic-article and book-topic-batch only ever generate the topic articles themselves, never touch book-guidelines.md, and never produce an index. Runs a deterministic script (scripts/crosslink.py, at the project's working-directory root — not inside this skill's folder) rather than hand-editing prose, so it's safe to re-run repeatedly as new articles get added. Manual invocation only — invoke explicitly with /book-crosslink, never automatically.
+description: Post-processing pass that wires up an already-generated collection of book-topic-article notes, with two responsibilities: (1) cross-referencing between article bodies via Obsidian [[wikilinks]] wherever one article's prose mentions another's topic or a subsection concept, including similarity-based near-miss matches, not just exact ones; (2) fully assembling/maintaining the vault's "index.md" Map-of-Content note, derived read-only from vaults/[book]/book-guidelines.md's Topic List — book-guidelines.md itself is never modified and keeps whatever plain-text form it already has; only the in-memory copy used to render index.md gets wikilinks. Every generated article that no Topic List entry matches is still surfaced in index.md, under a trailing "Extra Topics" section, so nothing generated is ever invisible from the Index even if it isn't part of the book's own topic ontology. This is the sole owner of the Index note; book-guidelines.md is treated as read-only input by every skill in this pipeline. book-topic-article and book-topic-batch only ever generate the topic articles themselves, never touch book-guidelines.md, and never produce an index. Runs a deterministic script (scripts/crosslink.py, at the project's working-directory root — not inside this skill's folder) rather than hand-editing prose, so it's safe to re-run repeatedly as new articles get added. Manual invocation only — invoke explicitly with /book-crosslink, never automatically.
 disable-model-invocation: true
-argument-hint: "[book-folder-name] [--dry-run] [--verbose] [--fuzzy-threshold 0.62] [--no-fuzzy] [--no-guidelines-links] [--no-index]"
+argument-hint: "[book-folder-name] [--dry-run] [--verbose] [--fuzzy-threshold 0.62] [--no-fuzzy] [--no-index]"
 ---
 
 # Book Article Cross-Linker
@@ -11,11 +11,10 @@ argument-hint: "[book-folder-name] [--dry-run] [--verbose] [--fuzzy-threshold 0.
 
 Wires up an existing, partially-or-fully-generated `book-topic-article` vault, end to end:
 
-1. cross-references article prose against each other (exact + similarity search),
-2. links every entry in `book-guidelines.md`'s Topic List to its matching generated article, once one exists, and
-3. fully regenerates `index.md` from that same linked Topic List.
+1. cross-references article prose against each other (exact + similarity search), and
+2. fully regenerates `index.md` from `book-guidelines.md`'s Topic List, read read-only and wikilinked only in the in-memory copy used to build the Index.
 
-**This skill is the sole owner of book-guidelines.md's link state and of the Index note.** Neither `book-topic-article` nor `book-topic-batch` touches `book-guidelines.md` or produces an index — they only generate the topic articles themselves. This keeps a clean separation: the batch/single-article skills are pure *generators*, and this skill is the pure *wiring* stage that runs after them (and can run again after every subsequent batch, since it's idempotent).
+**`book-guidelines.md` is never written by this skill (or any other skill in this pipeline) — it stays exactly as it comes, with no links ever inserted into it.** This skill is the sole owner of the Index note. Neither `book-topic-article` nor `book-topic-batch` touches `book-guidelines.md` or produces an index — they only generate the topic articles themselves. This keeps a clean separation: the batch/single-article skills are pure *generators*, and this skill is the pure *wiring* stage that runs after them (and can run again after every subsequent batch, since it's idempotent).
 
 **Why this is a script, not freehand editing:** reliably finding "the first plain-text occurrence of this exact term, but not inside a code block/math block/existing link/frontmatter, and not a duplicate of a link already present" across a whole folder — plus parsing and precisely rewriting a structured two-level list inside `book-guidelines.md` without disturbing its other sections — is exactly the kind of repetitive, rule-governed text transformation that should be deterministic rather than left to per-file judgement calls. The `crosslink.py` script handles all of that consistently.
 
@@ -23,8 +22,10 @@ Wires up an existing, partially-or-fully-generated `book-topic-article` vault, e
 
 ```
 vaults/[book]/*.md                    <- input AND output: existing generated articles, edited in place
-vaults/[book]/book-guidelines.md          <- input AND output: only the Topic List section is ever touched
-vaults/[book]/index.md       <- output: fully (re)derived from book-guidelines.md's Topic List each run
+vaults/[book]/book-guidelines.md          <- input only: read-only, NEVER written by this skill
+vaults/[book]/index.md       <- output: fully (re)derived from book-guidelines.md's Topic List
+                                  each run, plus a trailing "Extra Topics" section for any
+                                  article no Topic List entry matched
 vaults/[book]/.crosslink-glossary.md  <- optional input: manual term -> target overrides
 vaults/[book]/.crosslink-ignore.md    <- optional input: terms to never auto-link
 ```
@@ -52,15 +53,16 @@ Exact matching misses the case the user specifically asked this skill to handle:
 
 This is intentionally **not** treated as a real semantic/meaning-based match — it's a lexical recall net that surfaces plausible candidates (including some false positives) for a second opinion. String similarity doesn't know that two phrases mean the same thing, only that they're spelled similarly; genuinely different concepts that happen to share several words (or, conversely, true synonyms spelled completely differently, like an acronym) will not be handled correctly by this pass. That judgment call belongs to whoever reviews the report — which, in this pipeline, is you (the assistant), reading the printed suggestions and deciding which ones are real.
 
-**Pass 3 — guidelines Topic List linking + Index assembly (auto-applied, narrowly scoped):**
+**Pass 3 — Index assembly, derived read-only from the Topic List (auto-applied, narrowly scoped):**
 
-Unlike passes 1/2, `book-guidelines.md` and `index.md` are never scanned as free prose. Instead:
+Unlike passes 1/2, `book-guidelines.md` is never scanned as free prose, and — unlike earlier versions of this skill — it is **never written to at all**. Instead:
 
-1. Only the **`## Topic List` section** of `book-guidelines.md` is parsed — the Header and Chapter Summaries sections are never touched, no matter what they contain.
-2. Every top-level entry and every subtopic bullet is matched against the set of generated articles, in order of confidence: an **exact** filename-slug match first, then a **collision-suffixed** match (for a subtopic disambiguated as `Beta-Reduction-(Theory-of-Expressions).md`), then a **fuzzy** similarity fallback (reusing pass 2's scoring) for minor wording drift between the guidelines phrasing and the article that actually got generated for it.
-3. A matched entry gets its text wrapped in a wikilink (`[[Target|original text]]`), preserving the numbering/bolding/bullet formatting exactly. An entry with no match yet is left as plain text — so **the Topic List itself doubles as a live "what's been generated so far" indicator.**
-4. **Every entry is re-evaluated on every run**, not just unlinked ones — but a stable exact/collision match never changes, and a fuzzy match is only ever *replaced* by a later exact/collision match (e.g. once a subtopic that had fallen back to linking its parent category gets its own dedicated article), never by a different fuzzy match. This keeps steady-state runs a true no-op while still letting imprecise early links self-correct as the vault fills in — this was verified directly: a subtopic that initially fuzzy-matched its parent article correctly re-pointed to its own article the moment that article was generated, and stayed a no-op on every run before and after.
-5. `index.md` is then **fully regenerated** from that same (now-linked) Topic List content, with a back-link to `book-guidelines.md` and a title pulled from the guidelines Header's `**Title:**` field (falling back to a humanized folder name if that's missing). Being entirely derived, it's simply rewritten each run rather than incrementally merged — cheap, and guaranteed to always be exactly in sync with the Topic List.
+1. Only the **`## Topic List` section** of `book-guidelines.md` is read — the Header and Chapter Summaries sections are irrelevant to this pass, and nothing in the file is ever modified on disk.
+2. Every top-level entry and every subtopic bullet is matched, **in memory only**, against the set of generated articles, in order of confidence: an **exact** filename-slug match first, then a **collision-suffixed** match (for a subtopic disambiguated as `Beta-Reduction-(Theory-of-Expressions).md`), then a **fuzzy** similarity fallback (reusing pass 2's scoring) for minor wording drift between the guidelines phrasing and the article that actually got generated for it.
+3. A matched entry's text is wrapped in a wikilink (`[[Target|original text]]`) **in that in-memory copy only** — preserving the numbering/bolding/bullet formatting exactly — for use in `index.md`. `book-guidelines.md` on disk keeps whatever plain-text form it already has, entirely untouched.
+4. **Every entry is re-evaluated on every run** against the live set of generated articles, so the Index always reflects current matches — a subtopic that only fuzzy-matched its parent category early on will resolve to its own dedicated article the moment that article exists, with no stale state to clean up, since nothing persists between runs except the articles and `book-guidelines.md` itself (which pass 3 never changes).
+5. `index.md` is then **fully regenerated** from that in-memory linked Topic List, with a back-link to `book-guidelines.md` and a title pulled from the guidelines Header's `**Title:**` field (falling back to a humanized folder name if that's missing). Being entirely derived, it's simply rewritten each run rather than incrementally merged — cheap, and guaranteed to always be exactly in sync with the Topic List. An entry with no matching article yet appears as plain text in the Index — so **the Index doubles as a live "what's been generated so far" indicator**, without book-guidelines.md itself ever needing to carry that state.
+6. **Every generated article stem gets tracked as either "claimed" or "unclaimed"** by this matching pass. Any article whose stem was never wikilinked-to by any Topic List entry this run (at *any* tier — exact, collision, or fuzzy) is listed under a trailing `## Extra Topics` heading appended to `index.md`, each as a plain wikilink (`[[Stem|Slug Title]]`) — so every article physically present in the folder is reachable from the Index, whether or not it corresponds to anything in the book's own Topic List. This covers, for instance, a `book-topic-article` topic synthesized across chapters, or phrased well outside the guidelines' own wording, that never had a dedicated Topic List bullet to match against. Like the rest of pass 3, this section is fully re-derived each run: an article that later gains a genuine Topic List match (because the guidelines were regenerated, or a fuzzy match starts landing) simply drops out of Extra Topics on the next run and appears wikilinked under its matched entry instead — no manual bookkeeping required. If every article matched, the `## Extra Topics` section is omitted entirely rather than rendered empty.
 
 ## The review-and-promote loop for pass-2 suggestions
 
@@ -87,9 +89,9 @@ Run the script — at `scripts/crosslink.py` under the working directory root, p
 python3 scripts/crosslink.py "vaults/[book]" --verbose
 ```
 
-Use `--dry-run` first if the user wants to preview changes before committing (recommended the first time this is run on a given vault, or any time `.crosslink-ignore.md`/`.crosslink-glossary.md` was just edited and the effect is untested) — this suppresses every write across all three passes, including book-guidelines.md and the Index note. Once satisfied, run it again without `--dry-run` to actually write the changes. Pass 2 never writes regardless of `--dry-run`.
+Use `--dry-run` first if the user wants to preview changes before committing (recommended the first time this is run on a given vault, or any time `.crosslink-ignore.md`/`.crosslink-glossary.md` was just edited and the effect is untested) — this suppresses every write, including the Index note (book-guidelines.md is never written regardless of `--dry-run`, since pass 3 only ever reads it). Once satisfied, run it again without `--dry-run` to actually write the changes. Pass 2 never writes regardless of `--dry-run`.
 
-Use `--no-guidelines-links` to skip pass 3's guidelines/Index work entirely (this also implicitly skips the Index, since it's derived from the linked Topic List), or `--no-index` to keep the guidelines links but skip regenerating the Index note specifically.
+Use `--no-index` to skip pass 3 entirely (no Index regeneration).
 
 Do not attempt to replicate any of this logic by manually editing files with `str_replace` — the whole point of scripting these steps is the consistency guarantee across every file (including the structured parsing of `book-guidelines.md`) simultaneously.
 
@@ -110,13 +112,15 @@ The script also prints a "possible related mention(s)" section per file — phra
 3. Re-run the script (`python3 scripts/crosslink.py "vaults/[book]" --verbose`, without `--dry-run`) so pass 1 picks up the newly glossary'd phrases and writes the links deterministically.
 4. Tell the user how many suggestions you reviewed, how many you promoted, and briefly why you set aside the rest (if any looked like false positives, say so — it helps them calibrate `--fuzzy-threshold` for next time if they want fewer or more candidates surfaced).
 
-### Step 5 — Report the guidelines/Index result (pass 3)
+### Step 5 — Report the Index result (pass 3)
 
-The script reports how many Topic List entries were newly linked or upgraded in `book-guidelines.md`, and whether the Index note was updated or already current. Summarize this plainly — how many topics in the guidelines are now linked to an actual article vs. still awaiting one is genuinely useful information for the user tracking progress on a large vault (especially a deep-mode `book-topic-batch` run with dozens of subtopics).
+The script reports how many Topic List entries resolved to a linked article in this run's in-memory pass (book-guidelines.md itself is never modified), and whether the Index note was updated or already current. Summarize this plainly — how many topics now link to an actual article in the Index vs. still awaiting one is genuinely useful information for the user tracking progress on a large vault (especially a deep-mode `book-topic-batch` run with dozens of subtopics).
+
+The script also reports how many articles ended up **unmatched** by any Topic List entry and were listed under `## Extra Topics` instead (naming them). Mention this whenever the count is nonzero — it's the user's signal that either (a) those articles cover genuinely extra ground beyond the book's own topic ontology, which is fine and expected, or (b) the topic was phrased far enough from the guidelines' wording that even the fuzzy fallback (threshold 0.55 inside `find_matching_article`) didn't catch it, which might be worth a `book-guidelines` regeneration or a manual look if the user expected a real match. Don't guess which case it is — just report the names and let the user decide; if they confirm it should have matched, point them at `book-guidelines.md`'s Topic List wording as the thing to reconcile (never at editing `book-guidelines.md` yourself — this skill treats it as read-only, full stop).
 
 ### Step 6 — Mention re-run safety
 
-Note for the user that this is meant to be **re-run after every future `book-topic-article`/`book-topic-batch` run** that adds new articles to the same vault — because all three passes are either idempotent or purely advisory, re-running the whole thing is the normal way to keep a growing vault fully wired (both article-to-article and guidelines-to-article), not a one-time operation.
+Note for the user that this is meant to be **re-run after every future `book-topic-article`/`book-topic-batch` run** that adds new articles to the same vault — because all three passes are either idempotent, purely advisory, or fully re-derived from scratch each time, re-running the whole thing is the normal way to keep a growing vault fully wired (both article-to-article and the Index), not a one-time operation.
 
 ## Example
 
@@ -126,5 +130,5 @@ Input: `/book-crosslink Martin-Löf_Type_Theory`
 - Pass-1 report: e.g. `Theory-of-Expressions.md: 3 links added` (mentions of "Definitional Equality," "Universes," and "Program Derivation" each wrapped on first occurrence), `Universes.md: 2 links added`, etc.
 - Pass-2 report: e.g. `Universes.md: 2 possible related mention(s)` — `"the set of small sets" ~ "Universes" (score 0.71)` and `"defeq" ~ "Definitional Equality" (score 0.31, below threshold, not shown)`. The first is judged a real match (same concept, reworded) and promoted to `.crosslink-glossary.md` as `the set of small sets | Universes`; the acronym wasn't caught by similarity at all, since it shares no words with the target — worth telling the user that abbreviations need a manual glossary entry, not the similarity pass, if they want those covered.
 - Re-runs the script; the promoted phrase is now linked by pass 1.
-- Pass-3 report: `12 Topic List entries linked in book-guidelines.md` (out of 35 total, since it's a deep-mode vault that isn't fully generated yet — 23 subtopics are still plain text, correctly left unlinked). `Index note updated at vaults/index.md`.
-- Summary to the user: "11 links added across 7 articles via exact matching; 3 similarity suggestions reviewed, 1 promoted and applied, 2 set aside as unrelated. In book-guidelines.md, 12 of 35 Topic List entries now link to a generated article (the rest are still awaiting one) — Index note updated to match."
+- Pass-3 report: `12 Topic List entries linked for the Index (book-guidelines.md itself left untouched)` (out of 35 total, since it's a deep-mode vault that isn't fully generated yet — 23 subtopics are still plain text in the Index, correctly left unlinked). Also: `1 article(s) unmatched by any Topic List entry — listed under Extra Topics: Beta-Reduction-Worked-Examples` (a supplementary article generated outside the Topic List's own wording). `Index note updated at vaults/index.md`.
+- Summary to the user: "11 links added across 7 articles via exact matching; 3 similarity suggestions reviewed, 1 promoted and applied, 2 set aside as unrelated. In the Index, 12 of 35 Topic List entries now link to a generated article (the rest are still awaiting one); one extra article, Beta-Reduction-Worked-Examples, didn't match any Topic List entry and is listed under a new Extra Topics section instead, so it's still reachable from the Index. book-guidelines.md itself was left exactly as it was — Index note updated to match."
