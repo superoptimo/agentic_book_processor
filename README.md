@@ -102,6 +102,58 @@ Once a workspace is built, open it with the matching AI assistant (e.g. `claude`
    list, and (re)builds `vaults/[book]/index.md`. Re-run this after every batch that adds
    new articles.
 
+### `/book-topic-article` in detail
+
+Generates one deep-dive article for a single topic of an already-processed book.
+
+```bash
+/book-topic-article <book> "<topic>"                      # topic only
+/book-topic-article <book> "<topic>" --prompt "<prompt>"  # topic + steering prompt
+/book-topic-article <book> --prompt "<prompt>"            # prompt only; topic is derived from it
+```
+
+- `<book>` — the `sources/` folder name, or an informal reference (title, author,
+  nickname); the closest match is used, and it asks if two books are ambiguous.
+- `"<topic>"` — a title or natural-language description (e.g. `"the part about
+  universes"`). It's matched semantically against the Topic List and Chapter Summaries in
+  `vaults/[book]/book-guidelines.md`, which is used only as a map to find the page range.
+- `--prompt "<prompt>"` — optional free-form steering for *that one article*: questions
+  it must answer, an angle or scope, and style/emphasis (audience, grounding language,
+  depth, structure, output language). Prompt directives win over `.article-style.md` and
+  `.learning-goals.md` where they conflict, but cannot disable the fixed core rules
+  (LaTeX-only math, first-principles-before-symbols, source fidelity, frontmatter and
+  back-link). The prompt is recorded in a `prompt:` frontmatter line.
+- If you give neither a topic nor a prompt, it asks for one.
+
+What happens:
+
+1. **Prerequisite check** — if `vaults/[book]/book-guidelines.md` is missing, it stops and
+   tells you to run `/book-guidelines [book]` first.
+2. **Existing-article check** — if a note on the same topic already exists, it asks
+   whether to leave it, regenerate it, or write a complementary article under a different
+   slug (cross-linked to the first). Saying "replace" or "complement" in the prompt skips
+   the question. It never overwrites a file it hasn't looked at.
+3. **Source re-read** — extracts the relevant pages of `sources/[book]/book.pdf`, so the
+   content comes from the book itself and not from the compressed guidelines.
+4. **Style and goals** — merges `vaults/.article-style.md`, `vaults/[book]/.article-style.md`,
+   `vaults/.learning-goals.md` and `vaults/[book]/.learning-goals.md` (any that exist),
+   then the prompt. Focus Area tags in the book's `.learning-goals.md` decide which goal
+   connections the closing synthesis highlights.
+5. **Output** — `vaults/[book]/[Topic-Slug].md`, then a short report of the pages used,
+   the config files applied, how a prompt was interpreted, and any deviations.
+
+Examples:
+
+```bash
+/book-topic-article thompson-type-theory "Theory of Expressions"
+
+/book-topic-article nederpelt-geuvers-type-theory --prompt "How does type checking work \
+  once types are terms? Focus on the algorithm, Rust first, Lean second, skip the history. \
+  Complement the existing article on well-typedness."
+```
+
+After adding articles, re-run `/book-crosslink [book]` to link them into the vault.
+
 ### Configuring style and learning goals
 
 Two optional config layers shape every generated article, without ever inventing content
@@ -172,6 +224,22 @@ from the raw `vaults/` pipeline output), this skill finds every book or root-lev
 /crosslink-bulk             # copy and crosslink everything new
 /crosslink-bulk --dry-run   # preview what would be copied, without writing anything
 ```
+
+Prerequisites and behavior:
+
+- `build_workspace.py` does not create `workspace/`; you create and curate it yourself,
+  next to `vaults/` (it can also hold things like `*.canvas` files or `custom_notes`,
+  which this skill ignores).
+- **Books:** every folder in `vaults/` with no same-named folder in `workspace/` is listed
+  for you first, then copied wholesale (`cp -r`) and crosslinked with `/book-crosslink2 [book]`.
+- **Roadmaps:** every root-level `vaults/learning-roadmap*.md` missing from `workspace/` is
+  copied. Oddly-named variants (e.g. a backup-looking `_old` file) are flagged and left
+  uncopied until you confirm.
+- **Curation:** once per run, `/book-crosslink2 --curate-learning-roadmaps` is run over all
+  roadmap notes (dry run first, then applying confident fixes). This pass runs even when
+  nothing new was copied.
+- **Report:** it ends with a summary of books copied (with links added and unmatched
+  topics), roadmaps copied, anything flagged, and the curation result.
 
 It never modifies `vaults/` (strictly read-only source) and never re-copies a book already
 present in `workspace/` — re-running `/book-crosslink2 [book]` directly is how an existing
